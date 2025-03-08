@@ -200,5 +200,5 @@ async def ask_question(request: QuestionRequest,
         raise HTTPException(status_code=500, detail=f"Lỗi khi gọi OpenAI API: {str(e)}")
 if __name__ == "__main__":
     import uvicorn
-     port = int(os.environ.get("PORT", 5000))  # Lấy PORT từ Heroku hoặc mặc định 8000 nếu chạy local
-     uvicorn.run(app, host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 5000))  # Lấy PORT từ Heroku hoặc mặc định 8000 nếu chạy local
+    uvicorn.run(app, host="0.0.0.0", port=port)
