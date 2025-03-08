@@ -5,7 +5,7 @@ import pandas as pd
 import shutil
 from docx import Document
 import re
-from fastapi import FastAPI, HTTPException, Query,Header
+from fastapi import FastAPI, HTTPException, Query,Header,File,  UploadFile
 from fastapi.responses import JSONResponse, FileResponse
 from typing import List
 from dotenv import load_dotenv
@@ -27,7 +27,15 @@ TEMP_DIR = "temp"
 OUTPUT_DIR = "output"
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-
+# 🔹 Upload File API
+@app.post("/upload-file/")
+async def upload_file(file: UploadFile = File(...)):
+    """API để khách hàng upload file lên server trước khi xử lý."""
+    file_path = os.path.join(TEMP_DIR, file.filename)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    return {"message": "File uploaded successfully", "file_path": file_path}
 # Text cleaning function
 def clean_text(text: str) -> str:
     return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text).strip()
@@ -60,9 +68,13 @@ async def get_extracted_text(file_paths: List[str] = Query(...)):
     """Extracts text from multiple files and returns combined text."""
     extracted_texts = []
     for file_path in file_paths:
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail=f"Không tìm thấy {file_path}")
-        extracted_texts.append(extract_text_from_file(file_path))
+        # if not os.path.exists(file_path):
+        #     raise HTTPException(status_code=404, detail=f"Không tìm thấy {file_path}")
+        # extracted_texts.append(extract_text_from_file(file_path))
+        full_path = os.path.join(TEMP_DIR, os.path.basename(file_path))  # Đảm bảo đường dẫn đúng trong Heroku
+        if not os.path.exists(full_path):
+            raise HTTPException(status_code=404, detail=f"Không tìm thấy {full_path}")
+        extracted_texts.append(extract_text_from_file(full_path))
 
     return {"extracted_text": "\n\n".join(extracted_texts)}
 # ✅ Xử lý API Key do người dùng cung cấp
@@ -156,10 +168,13 @@ async def get_json(
         raise HTTPException(status_code=400, detail="Thiếu OpenAI API Key. Vui lòng cung cấp qua 'openai_api_key' trong header.")
     extracted_texts = []
     for file_path in file_paths:
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail=f"Không tìm thấy {file_path}")
-        extracted_texts.append(extract_text_from_file(file_path))
-
+        # if not os.path.exists(file_path):
+        #     raise HTTPException(status_code=404, detail=f"Không tìm thấy {file_path}")
+        # extracted_texts.append(extract_text_from_file(file_path))
+        full_path = os.path.join(TEMP_DIR, os.path.basename(file_path))
+        if not os.path.exists(full_path):
+            raise HTTPException(status_code=404, detail=f"Không tìm thấy {full_path}")
+        extracted_texts.append(extract_text_from_file(full_path))
     full_text = "\n\n".join(extracted_texts)
     extracted_info = extract_info_with_openai(full_text,openai_api_key)
 
@@ -180,8 +195,11 @@ async def ask_question(request: QuestionRequest,
     """Extracts text from a file and answers a question using OpenAI."""
     if not openai_api_key:
         raise HTTPException(status_code=400, detail="Thiếu OpenAI API Key. Vui lòng cung cấp qua 'openai_api_key' trong header.")
-    if not os.path.exists(request.filename):
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy {request.filename}")
+    # if not os.path.exists(request.filename):
+    #     raise HTTPException(status_code=404, detail=f"Không tìm thấy {request.filename}")
+    full_path = os.path.join(TEMP_DIR, os.path.basename(request.filename))
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail=f"Không tìm thấy {full_path}")
 
     extracted_text = extract_text_from_file(request.filename)
     try:
