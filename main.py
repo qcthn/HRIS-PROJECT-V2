@@ -5,13 +5,13 @@ import pandas as pd
 import shutil
 from docx import Document
 import re
-from fastapi import FastAPI, HTTPException, Query,Header,File,  UploadFile
+from fastapi import FastAPI, HTTPException, Query,Header,File,  UploadFile,Form
 from fastapi.responses import JSONResponse, FileResponse
-from typing import List
+from typing import List, Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel
-
+import io
 # Load API Key
 # load_dotenv()
 # api_key = os.getenv("OPENAI_API_KEY")
@@ -23,39 +23,42 @@ from pydantic import BaseModel
 app = FastAPI()
 
 # Folders
-TEMP_DIR = "temp"
-OUTPUT_DIR = "output"
-os.makedirs(TEMP_DIR, exist_ok=True)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+# TEMP_DIR = "temp"
+# OUTPUT_DIR = "output"
+# os.makedirs(TEMP_DIR, exist_ok=True)
+# os.makedirs(OUTPUT_DIR, exist_ok=True)
 # 🔹 Upload File API
-@app.post("/upload-file/")
-async def upload_file(file: UploadFile = File(...)):
-    """API để khách hàng upload file lên server trước khi xử lý."""
-    file_path = os.path.join(TEMP_DIR, file.filename)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+# @app.post("/upload-file/")
+# async def upload_file(file: UploadFile = File(...)):
+#     """API để khách hàng upload file lên server trước khi xử lý."""
+#     file_path = os.path.join(TEMP_DIR, file.filename)
+#     with open(file_path, "wb") as buffer:
+#         shutil.copyfileobj(file.file, buffer)
     
-    return {"message": "File uploaded successfully", "file_path": file_path}
+#     return {"message": "File uploaded successfully", "file_path": file_path}
 # Text cleaning function
 def clean_text(text: str) -> str:
     return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text).strip()
 
 # File extraction function
-def extract_text_from_file(file_path: str) -> str:
-    ext = file_path.split('.')[-1].lower()
-    
+async def extract_text_from_uploadfile(uploaded_file: UploadFile) -> str:
+    # ext = file_path.split('.')[-1].lower()
+    filename = uploaded_file.filename or ""
+    ext = filename.split('.')[-1].lower()
     try:
+        file_bytes = await uploaded_file.read()  # Đọc toàn bộ file vào biến bytes
+        file_stream = io.BytesIO(file_bytes)    
         if ext == "pdf":
-            with pdfplumber.open(file_path) as pdf:
+            with pdfplumber.open(file_stream) as pdf:
                 return "\n".join(clean_text(page.extract_text() or "") for page in pdf.pages)
         elif ext == "docx":
-            doc = Document(file_path)
+            doc = Document(file_stream)
             return "\n".join(clean_text(p.text) for p in doc.paragraphs)
         elif ext == "txt":
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_stream, "r", encoding="utf-8") as f:
                 return clean_text(f.read())
         elif ext == "xlsx":
-            df = pd.read_excel(file_path, dtype=str)
+            df = pd.read_excel(file_stream, dtype=str)
             return clean_text(df.to_string(index=False))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi xử lý {ext.upper()}: {e}")
@@ -63,20 +66,31 @@ def extract_text_from_file(file_path: str) -> str:
     raise HTTPException(status_code=400, detail="Định dạng không hỗ trợ")
 
 # ✅ Updated: Correctly handle multiple file paths in query parameters
-@app.get("/get-extracted-text/")
-async def get_extracted_text(file_paths: List[str] = Query(...)):
+@app.post("/get-extracted-text/")
+async def get_extracted_text(files: List[UploadFile] = File(...)):
     """Extracts text from multiple files and returns combined text."""
-    extracted_texts = []
-    for file_path in file_paths:
+    # extracted_texts = []
+    # for file_path in file_paths:
         # if not os.path.exists(file_path):
         #     raise HTTPException(status_code=404, detail=f"Không tìm thấy {file_path}")
         # extracted_texts.append(extract_text_from_file(file_path))
-        full_path = os.path.join(TEMP_DIR, os.path.basename(file_path))  # Đảm bảo đường dẫn đúng trong Heroku
-        if not os.path.exists(full_path):
-            raise HTTPException(status_code=404, detail=f"Không tìm thấy {full_path}")
-        extracted_texts.append(extract_text_from_file(full_path))
+        # full_path = os.path.join(TEMP_DIR, os.path.basename(file_path))  # Đảm bảo đường dẫn đúng trong Heroku
+        # if not os.path.exists(full_path): 
+        #     raise HTTPException(status_code=404, detail=f"Không tìm thấy {full_path}")
+        # extracted_texts.append(extract_text_from_file(full_path))
+    if not files:
+        raise HTTPException(status_code=400, detail="Chưa upload file nào.")
 
-    return {"extracted_text": "\n\n".join(extracted_texts)}
+    all_extracted_texts = []
+    for f in files:
+        text = await extract_text_from_uploadfile(f)
+        all_extracted_texts.append(text)
+
+    # Gộp text tất cả file
+    combined_text = "\n\n".join(all_extracted_texts)
+    return {"extracted_text": combined_text}
+
+    # return {"extracted_text": "\n\n".join(extracted_texts)}
 # ✅ Xử lý API Key do người dùng cung cấp
 def get_openai_client(user_api_key: str):
     """Tạo OpenAI client sử dụng API Key do người dùng cung cấp."""
@@ -116,7 +130,6 @@ def extract_info_with_openai(text: str,user_api_key: str) -> dict:
     For **Strengths and Weaknesses**, analyze the candidate's work experience to identify:
     - **Strengths:** Key skills and attributes demonstrated through their experience.
     - **Weaknesses:** Areas for improvement or challenges faced in their roles.
-    *** WARNING: remember JSON format.
     Văn bản CV:
     {text}
     """
@@ -124,7 +137,7 @@ def extract_info_with_openai(text: str,user_api_key: str) -> dict:
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-             {"role": "system", "content":"You are an expert in extracting information from CVs (resumes) and images with 10 years of experience in getting the exact information needed to recruit suitable positions for the company."
+             {"role": "system", "content": "You are an expert in extracting information from CVs (resumes) and images with 10 years of experience in getting the exact information needed to recruit suitable positions for the company."
 
             "**Context:** I will provide you with resumes of candidates (which can be one or more) or image files containing text."
 
@@ -160,30 +173,32 @@ def extract_info_with_openai(text: str,user_api_key: str) -> dict:
         raise HTTPException(status_code=500, detail=f"Lỗi phân tích JSON: {e}")
 
 # ✅ Updated: Correctly handle multiple file paths in query parameters
-@app.get("/get-json/")
-async def get_json(
-    file_paths: List[str] = Query(...),
-    openai_api_key: str = Header(None, convert_underscores=False)):
-    """Extracts text from files, processes into JSON, and returns JSON file."""
+@app.post("/get-json/")
+async def get_json_from_files(
+    files: List[UploadFile] = File(...),
+    openai_api_key: Optional[str] = Header(None, convert_underscores=False)):
+    if not files:
+        raise HTTPException(status_code=400, detail="Chưa upload file nào.")
     if not openai_api_key:
-        raise HTTPException(status_code=400, detail="Thiếu OpenAI API Key. Vui lòng cung cấp qua 'openai_api_key' trong header.")
-    extracted_texts = []
-    for file_path in file_paths:
-        # if not os.path.exists(file_path):
-        #     raise HTTPException(status_code=404, detail=f"Không tìm thấy {file_path}")
-        # extracted_texts.append(extract_text_from_file(file_path))
-        full_path = os.path.join(TEMP_DIR, os.path.basename(file_path))
-        if not os.path.exists(full_path):
-            raise HTTPException(status_code=404, detail=f"Không tìm thấy {full_path}")
-        extracted_texts.append(extract_text_from_file(full_path))
-    full_text = "\n\n".join(extracted_texts)
-    extracted_info = extract_info_with_openai(full_text,openai_api_key)
+        raise HTTPException(
+            status_code=400,
+            detail="Thiếu OpenAI API Key. Vui lòng truyền 'openai_api_key' trong Header."
+        )
 
-    json_file = os.path.join(OUTPUT_DIR, "combined_output.json")
-    with open(json_file, "w", encoding="utf-8") as f:
-        json.dump(extracted_info, f, ensure_ascii=False, indent=4)
+    all_texts = []
+    for f in files:
+        text = await extract_text_from_uploadfile(f)
+        all_texts.append(text)
 
-    return FileResponse(json_file, media_type="application/json", filename="combined_output.json")
+    # Gộp toàn bộ text
+    full_text = "\n\n".join(all_texts)
+
+    # Gọi hàm trích xuất JSON qua OpenAI
+    extracted_info = extract_info_with_openai(full_text, openai_api_key)
+    
+    # Trả về JSON (không cần ghi ra file)
+    return JSONResponse(content=extracted_info)
+
 
 # ✅ Updated: Ensure correct naming for file parameter
 class QuestionRequest(BaseModel):
@@ -191,25 +206,32 @@ class QuestionRequest(BaseModel):
     question: str
 
 @app.post("/ask-question/")
-async def ask_question(request: QuestionRequest,
-                    openai_api_key: str = Header(None, convert_underscores=False)):
+async def  ask_question(
+    file: UploadFile = File(...),
+    question: str = Form(...),  # Lấy câu hỏi dưới dạng text
+    openai_api_key: Optional[str] = Header(None, convert_underscores=False)
+):
     """Extracts text from a file and answers a question using OpenAI."""
     if not openai_api_key:
         raise HTTPException(status_code=400, detail="Thiếu OpenAI API Key. Vui lòng cung cấp qua 'openai_api_key' trong header.")
     # if not os.path.exists(request.filename):
     #     raise HTTPException(status_code=404, detail=f"Không tìm thấy {request.filename}")
-    full_path = os.path.join(TEMP_DIR, os.path.basename(request.filename))
-    if not os.path.exists(full_path):
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy {full_path}")
+    if not file:
+        raise HTTPException(status_code=400, detail="Chưa upload file nào.")
+    # full_path = os.path.join(TEMP_DIR, os.path.basename(request.filename))
+    # if not os.path.exists(full_path):
+    #     raise HTTPException(status_code=404, detail=f"Không tìm thấy {full_path}")
 
-    extracted_text = extract_text_from_file(request.filename)
+    # extracted_text = extract_text_from_uploadfile(file)
+    extracted_text = await extract_text_from_uploadfile(file)
+    # user_question = question_req.question
     try:
         client = OpenAI(api_key=openai_api_key)
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": f"Play the role of a professional HR, with 10 years of experience in finding potential candidates suitable for the company based on the CV (resume) they send Context: I will provide you with information of each CV (resume) in text form, from which I will ask you some questions related to the CV (resume) of this candidate Task: Please provide the most accurate and closest information to the question I asked, helping me have the most objective view of this candidate so that I can decide whether to hire him or not Tone: solemn, dignified, straightforward, suitable for the office environment, recruitment. Below is the content of the candidate's CV\n{extracted_text}"},
-                {"role": "user", "content": request.question}
+                {"role": "user", "content": question}
             ]
         )
         answer = response.choices[0].message.content.strip()
@@ -217,6 +239,7 @@ async def ask_question(request: QuestionRequest,
         # return {"answer": response.choices[0].message.content.strip()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi khi gọi OpenAI API: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 5000))  # Lấy PORT từ Heroku hoặc mặc định 8000 nếu chạy local
