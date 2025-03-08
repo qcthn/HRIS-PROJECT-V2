@@ -116,6 +116,7 @@ def extract_info_with_openai(text: str,user_api_key: str) -> dict:
     For **Strengths and Weaknesses**, analyze the candidate's work experience to identify:
     - **Strengths:** Key skills and attributes demonstrated through their experience.
     - **Weaknesses:** Areas for improvement or challenges faced in their roles.
+    *** WARNING: remember JSON format.
     Văn bản CV:
     {text}
     """
@@ -123,7 +124,7 @@ def extract_info_with_openai(text: str,user_api_key: str) -> dict:
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-             {"role": "system", "content": "You are an expert in extracting information from CVs (resumes) and images with 10 years of experience in getting the exact information needed to recruit suitable positions for the company."
+             {"role": "system", "content":"You are an expert in extracting information from CVs (resumes) and images with 10 years of experience in getting the exact information needed to recruit suitable positions for the company."
 
             "**Context:** I will provide you with resumes of candidates (which can be one or more) or image files containing text."
 
